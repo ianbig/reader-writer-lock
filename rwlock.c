@@ -19,6 +19,41 @@
 // just one cond and w_active[0], w_waiting for write count
 // 2. add priority
 
+/**
+ * @param rwl - lock metadata
+ * @return int - the number of active writer
+ * **/
+int get_active_writer_count(rwl * l) {
+	if (l->w_active[0] > 0) {
+		assert(l->w_active[0] == 1);
+		return 1;
+	} else if (l->w_active[1] > 0) {
+		assert(l->w_active[1] == 1);
+		return 1;
+	} else if (l->w_active[2] > 0) {
+		assert(l->w_active[2] == 1);
+		return 1;
+	}
+
+	return 0;
+}
+
+/**
+ * @param rwl - lock metadata
+ * @return int - the index of highest priority of current waiting thread
+ * **/
+int get_highest_waiting_writer_priority(rwl * l) {
+	// printf("0: %d, 1: %d, 2: %d\n", l->w_wait[0], l->w_wait[1], l->w_wait[2]);
+	if (l->w_wait[0] > 0) {
+		return 0;
+	} else if (l->w_wait[1] > 0) {
+		return 1;
+	} else if (l->w_wait[2] > 0) {
+		return 2;
+	}
+	return -1;
+}
+
 //rwl_init initializes the reader-writer lock 
 void
 rwl_init(rwl *l)
@@ -46,7 +81,13 @@ void
 rwl_rlock(rwl *l)
 {
 	pthread_mutex_lock(&l->mutex);
-	while (l->w_active[0] > 0) {
+	while ((get_active_writer_count(l))!= 0) {
+		l->r_wait++;
+		pthread_cond_wait(&l->r_cond, &l->mutex);
+		l->r_wait--;
+	}
+
+	while (get_highest_waiting_writer_priority(l) > -1) {
 		l->r_wait++;
 		pthread_cond_wait(&l->r_cond, &l->mutex);
 		l->r_wait--;
@@ -60,10 +101,13 @@ rwl_rlock(rwl *l)
 void
 rwl_runlock(rwl *l)
 {
+	int index = 0;
 	pthread_mutex_lock(&l->mutex);
 	l->r_active--;
 	if (l->r_active == 0) {
 		pthread_cond_broadcast(&l->r_cond);
+	} else if ((index = get_highest_waiting_writer_priority(l)) != -1) {
+		pthread_cond_broadcast(&l->w_cond[index]);
 	}
 	pthread_mutex_unlock(&l->mutex);
 }
@@ -74,17 +118,29 @@ void
 rwl_wlock(rwl *l, int priority)
 {
 	pthread_mutex_lock(&l->mutex);
-	while (l->w_active[0] > 0) {
-		l->w_wait[0]++;
-		pthread_cond_wait(&l->r_cond, &l->mutex);
-		l->w_wait[0]--;
+	while ((get_active_writer_count(l)) != 0) {
+		l->w_wait[priority]++;
+		pthread_cond_wait(&l->w_cond[priority], &l->mutex);
+		l->w_wait[priority]--;
 	}
 
-	l->w_active[0]++;
+	while (priority > 0 && l->w_wait[0] > 0) {
+		l->w_wait[priority]++;
+		pthread_cond_wait(&l->w_cond[priority], &l->mutex);
+		l->w_wait[priority]--;
+	}
+
+	while (priority > 1 && l->w_wait[1] > 0) {
+		l->w_wait[priority]++;
+		pthread_cond_wait(&l->w_cond[priority], &l->mutex);
+		l->w_wait[priority]--;
+	}
+
+	l->w_active[priority]++;
 	while (l->r_active > 0) {
-		l->w_wait[0]++;
+		l->w_wait[priority]++;
 		pthread_cond_wait(&l->r_cond, &l->mutex);
-		l->w_wait[0]--;
+		l->w_wait[priority]--;
 	}
 	pthread_mutex_unlock(&l->mutex);	
 }
@@ -94,7 +150,16 @@ void
 rwl_wunlock(rwl *l, int priority)
 {
 	pthread_mutex_lock(&l->mutex);
-	l->w_active[0]--;
-	pthread_cond_broadcast(&l->r_cond);
+	l->w_active[priority]--;
+	
+	int waiting_writer = get_highest_waiting_writer_priority(l);
+	// printf("waiting writer with highest pq: %d\n", waiting_writer);
+	if (waiting_writer != -1) {
+		pthread_cond_broadcast(&l->w_cond[waiting_writer]); // TODO: try signal
+	} else {
+		pthread_cond_broadcast(&l->r_cond);
+	}
+
+	assert(l->r_active == 0);
 	pthread_mutex_unlock(&l->mutex);
 }
