@@ -73,8 +73,6 @@ rwl_init(rwl *l)
 	}
 }
 
-
-
 //rwl_rlock attempts to grab the lock in "read" mode
 void
 rwl_rlock(rwl *l)
