@@ -81,13 +81,7 @@ rwl_rlock(rwl *l)
 {
 	pthread_mutex_lock(&l->mutex);
 	l->r_wait++;
-	while ((get_active_writer_count(l)) != 0) {
-		pthread_cond_wait(&l->r_cond, &l->mutex);
-	}
-	l->r_wait--;
-
-	l->r_wait++;
-	while (get_highest_waiting_writer_priority(l) != -1) {
+	while ((get_active_writer_count(l)) != 0 ||  get_highest_waiting_writer_priority(l) != -1) {
 		pthread_cond_wait(&l->r_cond, &l->mutex);
 	}
 	l->r_wait--;
