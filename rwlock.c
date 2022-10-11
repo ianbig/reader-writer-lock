@@ -43,7 +43,6 @@ int get_active_writer_count(rwl * l) {
  * @return int - the index of highest priority of current waiting thread
  * **/
 int get_highest_waiting_writer_priority(rwl * l) {
-	// printf("0: %d, 1: %d, 2: %d\n", l->w_wait[0], l->w_wait[1], l->w_wait[2]);
 	if (l->w_wait[0] > 0) {
 		return 0;
 	} else if (l->w_wait[1] > 0) {
@@ -81,17 +80,18 @@ void
 rwl_rlock(rwl *l)
 {
 	pthread_mutex_lock(&l->mutex);
-	while ((get_active_writer_count(l))!= 0) {
-		l->r_wait++;
+	l->r_wait++;
+	while ((get_active_writer_count(l)) != 0) {
 		pthread_cond_wait(&l->r_cond, &l->mutex);
-		l->r_wait--;
 	}
+	l->r_wait--;
 
-	while (get_highest_waiting_writer_priority(l) > -1) {
-		l->r_wait++;
+	l->r_wait++;
+	while (get_highest_waiting_writer_priority(l) != -1) {
 		pthread_cond_wait(&l->r_cond, &l->mutex);
-		l->r_wait--;
 	}
+	l->r_wait--;
+
 	l->r_active++;
 	pthread_mutex_unlock(&l->mutex);
 }
@@ -106,8 +106,6 @@ rwl_runlock(rwl *l)
 	l->r_active--;
 	if (l->r_active == 0) {
 		pthread_cond_broadcast(&l->r_cond);
-	} else if ((index = get_highest_waiting_writer_priority(l)) != -1) {
-		pthread_cond_broadcast(&l->w_cond[index]);
 	}
 	pthread_mutex_unlock(&l->mutex);
 }
@@ -118,30 +116,23 @@ void
 rwl_wlock(rwl *l, int priority)
 {
 	pthread_mutex_lock(&l->mutex);
+
+	l->w_wait[priority]++;
+	while (l->r_active > 0) {
+		pthread_cond_wait(&l->r_cond, &l->mutex);
+	}
 	while ((get_active_writer_count(l)) != 0) {
-		l->w_wait[priority]++;
 		pthread_cond_wait(&l->w_cond[priority], &l->mutex);
-		l->w_wait[priority]--;
 	}
-
 	while (priority > 0 && l->w_wait[0] > 0) {
-		l->w_wait[priority]++;
 		pthread_cond_wait(&l->w_cond[priority], &l->mutex);
-		l->w_wait[priority]--;
 	}
-
 	while (priority > 1 && l->w_wait[1] > 0) {
-		l->w_wait[priority]++;
 		pthread_cond_wait(&l->w_cond[priority], &l->mutex);
-		l->w_wait[priority]--;
 	}
+	l->w_wait[priority]--;
 
 	l->w_active[priority]++;
-	while (l->r_active > 0) {
-		l->w_wait[priority]++;
-		pthread_cond_wait(&l->r_cond, &l->mutex);
-		l->w_wait[priority]--;
-	}
 	pthread_mutex_unlock(&l->mutex);	
 }
 
@@ -153,9 +144,8 @@ rwl_wunlock(rwl *l, int priority)
 	l->w_active[priority]--;
 	
 	int waiting_writer = get_highest_waiting_writer_priority(l);
-	// printf("waiting writer with highest pq: %d\n", waiting_writer);
 	if (waiting_writer != -1) {
-		pthread_cond_broadcast(&l->w_cond[waiting_writer]); // TODO: try signal
+		pthread_cond_broadcast(&l->w_cond[waiting_writer]);
 	} else {
 		pthread_cond_broadcast(&l->r_cond);
 	}
